@@ -5,14 +5,20 @@
 
 unsigned int BITS[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824, 2147483648};
 
-unsigned int encode(unsigned int* arr, unsigned int count){
+unsigned int* encode(unsigned int* arr, int* size){
+    printf("Compressing by FAW-encoding....\n");
     int fWordIndex = 0;
     int fWord = arr[0];
     char fWordType = 0;
     unsigned int tWord = 0;
     int dif;
-    unsigned int i=1;
+    int i=1;
+    int count = *size;
     while(i<count){
+        if(arr[i-1]>arr[i] || arr[i] < 0){
+            printf("Invalid data. Dataset must contain sorted positive integers.\n");
+            exit(0);
+        }
         dif = arr[i]-fWord-1;
         if(dif>-1 && dif<32){               // within the range of 32
             tWord |= BITS[dif];
@@ -55,10 +61,13 @@ unsigned int encode(unsigned int* arr, unsigned int count){
         }
         arr[fWordIndex++] = tWord;
     }
-    return fWordIndex;
+    *size = fWordIndex;
+    arr = (unsigned int*) realloc(arr, fWordIndex*4);
+    return arr;
 }
 //
-void show_items(unsigned int* encoded_items, unsigned int size){
+void show_items(unsigned int* encoded_items, int size){
+    printf("Show all items in encoded dataset:\n");
 	unsigned int tmp, j, count=0;
 	for(unsigned int si = 0; si < size; si++){
 		if((encoded_items[si]&0xC0000000)==0xC0000000){
@@ -90,24 +99,27 @@ void show_items(unsigned int* encoded_items, unsigned int size){
             printf("%d, ", encoded_items[si]);  count++;
 		}
 	}
-    printf("; #items: %d\n", count);
+    printf("; #items: %d\n\n", count);
 }
 //
-unsigned int decode(unsigned int* encoded_items, unsigned int size){
-    unsigned int* items = (unsigned int* )malloc(size*sizeof(unsigned int));
-	unsigned int tmp, j, count=0;
-	for(unsigned int si = 0; si < size; si++){
+unsigned int* decode(unsigned int* encoded_items, int* list_size){
+    printf("Decompressing FAW-encoded dataset....\n");
+    int size = *list_size;
+    unsigned int* items = (unsigned int* )malloc(size*4);
+    int count=0;
+	unsigned int tmp, j;
+	for(int si = 0; si < size; si++){
 		if((encoded_items[si]&0xC0000000)==0xC0000000){
 			// decode FR-word
             if(count+1 >= size){
-			    items = (unsigned int* )realloc(items, (count+1)*sizeof(unsigned int));
+			    items = (unsigned int* )realloc(items, (count+1)*4);
             }
             items[count++] = encoded_items[si]&0x3fffffff;
 			si++;
 			j = 0;
 			// decode R-word
             if(count+1 >= size){
-			    items = (unsigned int* )realloc(items, (count+encoded_items[si])*sizeof(unsigned int));
+			    items = (unsigned int* )realloc(items, (count+encoded_items[si])*4);
             }
 			while(j<encoded_items[si]){
                 items[count++] = tmp;
@@ -118,7 +130,7 @@ unsigned int decode(unsigned int* encoded_items, unsigned int size){
 		else if((encoded_items[si]&0xC0000000)==0x80000000){
 			// decode FM-word
             if(count+1 >= size){
-                items = (unsigned int* )realloc(items, (count+1)*sizeof(unsigned int));
+                items = (unsigned int* )realloc(items, (count+1)*4);
             }
             tmp = encoded_items[si]&0x3fffffff;
             items[count++] = tmp;
@@ -128,7 +140,7 @@ unsigned int decode(unsigned int* encoded_items, unsigned int size){
 			for(int j=0; j<32; j++){
 				if(encoded_items[si]&BITS[j]){
                     if(count+1 >= size){
-                        items = (unsigned int* )realloc(items, (count+1)*sizeof(unsigned int));
+                        items = (unsigned int* )realloc(items, (count+1)*4);
                     }
                     items[count++] = tmp+j;
 				}
@@ -137,18 +149,18 @@ unsigned int decode(unsigned int* encoded_items, unsigned int size){
 		else {
 			// S-Word
             if(count+1 >= size){
-			    items = (unsigned int* )realloc(items, (count+1)*sizeof(unsigned int));
+			    items = (unsigned int* )realloc(items, (count+1)*4);
             }
             items[count++] = encoded_items[si];
 		}
 	}
+    *list_size = count;
     //printf("; #items: %d\n", count);
-    memcpy(&encoded_items[0], &items[0], count*sizeof(unsigned int));
-    free(items);
-    return count;
+    return items;
 }
 //
-short exists(unsigned int* encoded_items, unsigned int size, unsigned int search_for){
+short exists(unsigned int* encoded_items, int size, unsigned int search_for){
+    printf("Searching '%u' in the compressed dataset...\n", search_for);
 	unsigned int tmp, j, count=0;
 	for(unsigned int si = 0; si < size; si++){
 		if((encoded_items[si]&0xC0000000)==0xC0000000){
@@ -203,72 +215,76 @@ short exists(unsigned int* encoded_items, unsigned int size, unsigned int search
     return -1;
 }
 //
-unsigned int* intersect(unsigned int* list1, unsigned int list1_size, unsigned int* list2, unsigned int list2_size, unsigned int* length){
-    
-    list1_size = decode(list1, list1_size);
-    list2_size = decode(list2, list2_size);
+unsigned int* intersect(unsigned int* list1, int list1_size, unsigned int* list2, int list2_size, int* length){
+    printf("Finding common values from two FAW-encoded datasets....\n");
+    unsigned int* dlist1 = decode(list1, &list1_size);
+    unsigned int* dlist2 = decode(list2, &list2_size);
     //printf("\n#common-items: %u %u\n\n", list1_size, list2_size);
-    unsigned int* results = (unsigned int* )malloc(sizeof(unsigned int));
-    unsigned int i=0, j=0, result_size = 0;
+    unsigned int* results = (unsigned int* )malloc(4);
+    int i=0, j=0, result_size = 0;
     while(i<list1_size && j<list2_size){
-        while(i<list1_size && list1[i] < list2[j]){
+        while(i<list1_size && dlist1[i] < dlist2[j]){
             i++;
         }
-        while(j<list2_size && list2[j] < list1[i]){
+        while(j<list2_size && dlist2[j] < dlist1[i]){
             j++;
         }
-        while(i<list1_size && j<list2_size && list1[i] == list2[j]){
-            results = (unsigned int* )realloc(results, (result_size+1)*sizeof(unsigned int));
-            results[result_size++] = list1[i];
+        while(i<list1_size && j<list2_size && dlist1[i] == dlist2[j]){
+            results = (unsigned int* )realloc(results, (result_size+1)*4);
+            results[result_size++] = dlist1[i];
             i++;
             j++;
         }
-        if(list1[list1_size-1] < list2[j] || list2[list2_size-1] < list1[i]){
+        if(dlist1[list1_size-1] < dlist2[j] || dlist2[list2_size-1] < dlist1[i]){
             break;
         }
     }
     // printf("\n#common-items: %u %u %u\n\n", list1_size, list2_size, result_size);
     *length = result_size;
+    free(dlist1);
+    free(dlist2);
     return results;
 }
 //
-unsigned int* merge(unsigned int* list1, unsigned int list1_size, unsigned int* list2, unsigned int list2_size, unsigned int* length){
-    
-    list1_size = decode(list1, list1_size);
-    list2_size = decode(list2, list2_size);
+unsigned int* merge(unsigned int* list1, int list1_size, unsigned int* list2, int list2_size, int* length){
+    printf("Finding merged values from two FAW-encoded datasets....\n");
+    unsigned int* dlist1 = decode(list1, &list1_size);
+    unsigned int* dlist2 = decode(list2, &list2_size);
     //printf("\n#common-items: %u %u\n\n", list1_size, list2_size);
-    unsigned int* results = (unsigned int* )malloc(sizeof(unsigned int));
+    unsigned int* results = (unsigned int* )malloc(4);
     unsigned int i=0, j=0, result_size = 0;
     while(i<list1_size && j<list2_size){
-        while(i<list1_size && list1[i] < list2[j]){
-            results = (unsigned int* )realloc(results, (result_size+1)*sizeof(unsigned int));
-            results[result_size++] = list1[i];
+        while(i<list1_size && dlist1[i] < dlist2[j]){
+            results = (unsigned int* )realloc(results, (result_size+1)*4);
+            results[result_size++] = dlist1[i];
             i++;
         }
-        while(j<list2_size && list2[j] < list1[i]){
-            results = (unsigned int* )realloc(results, (result_size+1)*sizeof(unsigned int));
-            results[result_size++] = list2[j];
+        while(j<list2_size && dlist2[j] < dlist1[i]){
+            results = (unsigned int* )realloc(results, (result_size+1)*4);
+            results[result_size++] = dlist2[j];
             j++;
         }
-        while(i<list1_size && j<list2_size && list1[i] == list2[j]){
-            results = (unsigned int* )realloc(results, (result_size+1)*sizeof(unsigned int));
-            results[result_size++] = list1[i];
+        while(i<list1_size && j<list2_size && dlist1[i] == dlist2[j]){
+            results = (unsigned int* )realloc(results, (result_size+1)*4);
+            results[result_size++] = dlist1[i];
             i++;
             j++;
         }
     }
     while(i<list1_size){
-        results = (unsigned int* )realloc(results, (result_size+1)*sizeof(unsigned int));
-        results[result_size++] = list1[i];
+        results = (unsigned int* )realloc(results, (result_size+1)*4);
+        results[result_size++] = dlist1[i];
         i++;
     }
     while(j<list2_size){
-        results = (unsigned int* )realloc(results, (result_size+1)*sizeof(unsigned int));
-        results[result_size++] = list2[j];
+        results = (unsigned int* )realloc(results, (result_size+1)*4);
+        results[result_size++] = dlist2[j];
         j++;
     }
     // printf("\n#common-items: %u %u %u\n\n", list1_size, list2_size, result_size);
     *length = result_size;
+    free(dlist1);
+    free(dlist2);
     return results;
 }
 //
